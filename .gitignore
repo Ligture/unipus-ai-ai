@@ -1,0 +1,6 @@
+.ide/
+.venv/
+shili/
+base/
+chrome/
+whisper/

@@ -1,6 +1,8 @@
-.ide/
+.idea/
 .venv/
 shili/
 base/
 chrome/
-whisper/
+whisper-bin-x64/
+tool/
+Unipus-ai.zip

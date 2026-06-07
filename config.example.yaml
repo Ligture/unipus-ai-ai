@@ -1,0 +1,123 @@
+# Unipus AI 配置文件示例
+# 复制此文件为 config.yaml 并填入你的配置
+
+# ===========================================
+# LLM API 配置
+# ===========================================
+
+# API密钥 (必填)
+api_key: "your-api-key-here"
+
+# API地址 (必填)
+# 常用地址:
+#   DeepSeek: https://api.deepseek.com/v1
+#   SiliconFlow: https://api.siliconflow.cn/v1
+#   OpenAI: https://api.openai.com/v1
+api_url: "https://api.deepseek.com/v1"
+
+# 模型名称 (必填)
+# 常用模型:
+#   DeepSeek: deepseek-v4-flash, deepseek-chat
+#   SiliconFlow: Qwen/Qwen3.6-35B-A3B
+#   OpenAI: gpt-4o-mini, gpt-4o
+model: "deepseek-v4-flash"
+
+# ===========================================
+# 服务器配置
+# ===========================================
+
+# Whisper 语音识别模型路径
+whisper_model: "./base"
+
+# 服务器监听配置
+server:
+  host: "0.0.0.0"    # 监听地址 (0.0.0.0 = 所有网卡)
+  port: 28955         # 监听端口
+
+# ===========================================
+# 代理配置
+# ===========================================
+
+# 是否启用代理
+# false: 直连 (默认)
+# true: 使用下方配置的代理
+proxy:
+  enabled: false
+  # HTTP代理地址，如 http://127.0.0.1:7890
+  http: ""
+  # HTTPS代理地址，支持 http/socks5
+  # http代理: http://127.0.0.1:7890
+  # socks5代理: socks5://127.0.0.1:7890
+  https: ""
+  # 不使用代理的地址 (逗号分隔)
+  no_proxy: "localhost,127.0.0.1"
+
+# ===========================================
+# 日志配置
+# ===========================================
+
+# 文件日志级别 (记录到 logs/ 目录)
+# DEBUG: 记录所有信息
+# INFO: 记录请求和结果摘要 (默认)
+# WARNING: 只记录警告和错误
+# ERROR: 只记录错误
+log_level: "INFO"
+
+# 终端显示日志级别
+# 级别选项同上
+log_level_console: "INFO"
+
+# ===========================================
+# 系统提示词配置
+# ===========================================
+
+# 带听力原文的答题提示词
+system_prompt: |
+  你是一个英语答题助手。用户会给出听力原文和由HTML提取的题目。你需要自行判断题目类型，并以严格的JSON格式返回结果。
+
+  【整体要求】
+  1. 开放讨论、自由回答等主观题，请给出符合题目要求的简短评论(不超过30词)，尽量低调、使用英文。
+  2. 必须且只能返回明确的合法JSON对象，不要输出任何Markdown标记或无关语句。
+
+  【字段规范】
+  1. type: SINGLE(单选题), MULTIPLE(多选题), FILL_IN_BLANK(填空题), OPEN_DISCUSSION(开放讨论题), SPK_REPETE(听力跟读), SPK_FREE(听力自由回答), ERROR_CORRECTION(改错题)
+  2. answer: 选择题返回字母数组，填空返回字符串数组，主观题返回英文回答，改错题返回二维数组
+  3. reply: 解题思路或补充说明
+
+  【改错题(ERROR_CORRECTION)特殊要求】
+  当题目要求改正句子中的错误单词时，type必须为"ERROR_CORRECTION"，answer必须为二维数组，每个内层数组包含两个元素：[原错误单词, 改正后的单词]。
+  示例: {"type":"ERROR_CORRECTION","answer":[["difficult","easy"],["noticed","saw"],["throws","throws"]],"reply":"根据听力原文改正错误单词"}
+  注意: 必须严格按原句中的错误单词原文输出，不要添加标点或额外字符。
+
+# 仅题目的答题提示词
+system_prompt_only: |
+  你是一个答题助手。用户会给出由HTML提取的题目。你需要自行判断题目类型，并以严格的JSON格式返回结果。
+
+  【整体要求】
+  1. 开放讨论等主观题，给出简短评论(不超过30词)，使用英文。
+  2. 必须返回合法JSON对象。
+
+  【字段规范】
+  1. type: SINGLE, MULTIPLE, FILL_IN_BLANK, OPEN_DISCUSSION, SPK_REPETE, SPK_FREE, ERROR_CORRECTION
+  2. answer: 选择题返回字母数组，填空返回字符串数组，主观题返回英文回答，改错题返回二维数组
+  3. reply: 解题思路或补充说明
+
+  【改错题(ERROR_CORRECTION)特殊要求】
+  当题目要求改正句子中的错误单词时，type必须为"ERROR_CORRECTION"，answer必须为二维数组，每个内层数组包含两个元素：[原错误单词, 改正后的单词]。
+  示例: {"type":"ERROR_CORRECTION","answer":[["difficult","easy"],["noticed","saw"]],"reply":"根据题目要求改正错误单词"}
+  注意: 必须严格按原句中的错误单词原文输出，不要添加标点或额外字符。
+
+# ===========================================
+# Endpoint 路径配置 (可选)
+# ===========================================
+
+# 自定义 API endpoint 路径
+# 未配置的字段将使用默认值，客户端启动时会自动获取
+# 一般无需修改，仅在自定义部署路径时使用
+# endpoints:
+#   transcribe: "/api/transcribe/audio"
+#   video: "/api/transcribe/video"
+#   llm: "/api/llm/answer"
+#   text: "/api/llm/text"
+#   tts: "/api/tts/generate"
+#   audio_files: "/api/audio"

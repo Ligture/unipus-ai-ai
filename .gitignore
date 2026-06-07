@@ -1,8 +1,34 @@
+# IDE
 .idea/
+.vscode/
+
+# Python
 .venv/
-shili/
+__pycache__/
+*.pyc
+*.pyo
+
+# 项目特定
 base/
 chrome/
+shili/
 whisper-bin-x64/
 tool/
+models/
+logs/
+audio_files/
 Unipus-ai.zip
+ffmpeg.exe
+run.bat
+test.py
+项目大纲.md
+
+# 配置文件 (含密钥)
+config.yaml
+config.json
+
+# Claude Code
+.claude/
+
+# 运行时
+.unipus.pid

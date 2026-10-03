@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unipus-ai-ai(u校园ai版ai版)
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  本脚本能对音频/视频转录为文本,并调用LLM模型生成答案并自动填充，口语题目可自动生成音频替换完成。
 // @author       lpmon
 // @match        *://ucontent.unipus.cn/*
@@ -1181,14 +1181,23 @@
         const hasErrorCorrection = !!questionElement.querySelector('.question-revise-mistake, .mistake-atom, .mistake-marker, .revise-mistake-reply-content');
 
         let localHint = "";
+        const sequence = questionElement.querySelector('.sequence-view');
 
         // 优先用DOM结构判断 (比CSS类名更可靠)
-        if (hasSentenceBlock && hasRecordBtn && hasScoreLayout) {
+        if (sequence) {
+            localHint = "SEQUENCE";
+            const prompts = [...sequence.querySelectorAll('.sortable-list-question-no')].map(el => el.innerText.trim());
+            const options = [...sequence.querySelectorAll('.sortable-list-wrapper .sequence-reply-view-item-text')].map(el => el.innerText.trim());
+            text = `${questionElement.querySelector('.abs-direction')?.innerText || ''}\n题干（按位置对应答案）：\n${prompts.join('\n')}\n选项池（字母是固定标识，不是当前位置）：\n${options.join('\n')}\n返回 type=SEQUENCE，answer 为最终从上到下的选项字母数组，每个选项恰好出现一次。`;
+        } else if (hasSentenceBlock && hasRecordBtn && hasScoreLayout) {
             localHint = "SPK_REPETE";
         } else if (hasPersonalState && hasRecordBtn && hasScoreLayout) {
             localHint = "SPK_FREE";
         } else if (hasErrorCorrection) {
             localHint = "ERROR_CORRECTION";
+        } else if (questionElement.querySelectorAll('.question-inputbox textarea').length > 1) {
+            localHint = "FILL_IN_BLANK";
+            text += `\n[逐题回答：共有 ${questionElement.querySelectorAll('.question-inputbox textarea').length} 个独立答题框，answer 必须为等长字符串数组，每个元素回答对应题目。]`;
         } else if (hasDubClass && hasRecordBtn) {
             // 视频配音题 (.question-video-dub-pc + .operate)
             localHint = "SPK_REPETE";
@@ -1720,7 +1729,7 @@
 
             const displayText = typeof answerData === 'object' ? JSON.stringify(answerData, null, 2) : answerData;
             updateAnswerStatus(displayText, 'success');
-            autoFillAnswer(answerData);
+            await autoFillAnswer(answerData);
             showToast('答案获取成功', 'success');
 
         } catch (error) {
@@ -1760,7 +1769,7 @@
 
             const displayText = typeof answerData === 'object' ? JSON.stringify(answerData, null, 2) : answerData;
             updateAnswerStatus(displayText, 'success');
-            autoFillAnswer(answerData);
+            await autoFillAnswer(answerData);
             showToast('答案获取成功', 'success');
 
         } catch (error) {
@@ -1776,17 +1785,58 @@
 
     // --- 自动填充逻辑 ---
     function setNativeValue(element, value) {
-        const valueSetter = Object.getOwnPropertyDescriptor(element, 'value').set;
-        const prototype = Object.getPrototypeOf(element);
-        const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
-
-        if (valueSetter && valueSetter !== prototypeValueSetter) {
-            prototypeValueSetter.call(element, value);
-        } else {
-            valueSetter.call(element, value);
-        }
+        const view = element.ownerDocument.defaultView;
+        const prototype = element.tagName === 'TEXTAREA' ? view.HTMLTextAreaElement.prototype
+            : element.tagName === 'SELECT' ? view.HTMLSelectElement.prototype : view.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+        if (!setter) throw new Error('当前控件不支持填充');
+        setter.call(element, value);
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    async function fillSequence(container, answer) {
+        const selector = '.sortable-list-wrapper .sequence-reply-view-item-text';
+        const items = () => [...container.querySelectorAll(selector)].filter(el => el.style.position !== 'fixed');
+        const label = el => el.querySelector('span')?.textContent.trim().replace(/[.．]$/, '').toUpperCase();
+        const original = items().map(label);
+        const target = (Array.isArray(answer) ? answer : typeof answer === 'string' ? answer.split(/[\s,，;；|→>\-]+/).filter(Boolean) : [])
+            .map(value => String(value).trim().replace(/[.．]$/, '').toUpperCase());
+        if (!original.length) throw new Error('未找到可拖动的排序选项（可能处于答案回顾模式）');
+        if (target.length !== original.length || new Set(target).size !== original.length || target.some(value => !original.includes(value))) {
+            throw new Error('排序答案必须包含所有选项字母，且每个字母仅出现一次');
+        }
+        const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+        const alreadyOrdered = original.every((value, index) => value === target[index]);
+        for (let index = 0; index < target.length; index++) {
+            const current = items();
+            const from = current.findIndex(el => label(el) === target[index]);
+            // An untouched list has no saved answer even when its default order is correct.
+            if (from === index && !(alreadyOrdered && index === 0)) continue;
+            const source = current[from];
+            const destination = current[index];
+            source.scrollIntoView({block: 'nearest'});
+            destination.scrollIntoView({block: 'nearest'});
+            const sourceRect = source.getBoundingClientRect();
+            const destinationRect = destination.getBoundingClientRect();
+            const view = container.ownerDocument.defaultView;
+            const fire = (node, type, rect, buttons) => node.dispatchEvent(new view.MouseEvent(type, {
+                bubbles: true, cancelable: true, button: 0, buttons,
+                clientX: rect.left + Math.min(30, rect.width / 2), clientY: rect.top + rect.height / 2,
+            }));
+            // react-sortable-hoc listens on the item for press, then on window for move/release.
+            fire(source, 'mousedown', sourceRect, 1);
+            try {
+                await pause(30);
+                fire(view, 'mousemove', destinationRect, 1);
+                await pause(120);
+            } finally {
+                fire(view, 'mouseup', destinationRect, 0);
+            }
+            await pause(150);
+            if (items()[index] && label(items()[index]) === target[index]) continue;
+            throw new Error(`排序选项 ${target[index]} 未移动到第 ${index + 1} 位，请检查页面是否允许拖动`);
+        }
     }
 
     async function autoFillAnswer(answerData) {
@@ -1798,7 +1848,9 @@
             const container = document.querySelector(QUESTION_CONTAINER_SELECTOR);
             if (!container) return;
 
-            if (type === 'SINGLE' || type === 'MULTIPLE') {
+            if (['SEQUENCE', 'SORT', 'SORTING', 'ORDERING', 'MATCHING', 'MATCH'].includes(type) && container.querySelector('.sequence-view')) {
+                await fillSequence(container, answer);
+            } else if (type === 'SINGLE' || type === 'MULTIPLE') {
                 const wraps = container.querySelectorAll('.option-wrap');
                 if (wraps.length === 0) return;
 
@@ -1834,10 +1886,10 @@
                 if (Array.isArray(answer)) {
                     answerArr = answer;
                 } else if (typeof answer === 'string') {
-                    answerArr = answer.split(/[|]|,/).map(a => a.trim());
+                    answerArr = inputs.length === 1 ? [answer] : answer.split('|').map(a => a.trim());
                 }
-
-                for (let i = 0; i < Math.min(inputs.length, answerArr.length); i++) {
+                if (!inputs.length || answerArr.length !== inputs.length) throw new Error('填空答案数量与答题框数量不一致');
+                for (let i = 0; i < inputs.length; i++) {
                     setNativeValue(inputs[i], answerArr[i]);
                 }
             } else if (type === 'ERROR_CORRECTION') {
@@ -1890,6 +1942,11 @@
                 }
             } else if (type === 'OPEN_DISCUSSION' || type === 'SPK_FREE' || type === 'SPK_REPETE') {
                 const textareas = container.querySelectorAll('textarea');
+                if (textareas.length > 1) {
+                    if (!Array.isArray(answer) || answer.length !== textareas.length) throw new Error('多个答题框需要逐题返回等长答案数组');
+                    for (let i = 0; i < textareas.length; i++) setNativeValue(textareas[i], String(answer[i]));
+                    return;
+                }
                 let answerText = "";
                 // 优先取 answer 字段 (实际回答文本), reply 是解题思路
                 if (typeof answer === 'string' && answer.trim().length > 0) {
@@ -1917,6 +1974,7 @@
             }
         } catch (e) {
             console.error("自动填充异常:", e);
+            throw e;
         }
     }
 

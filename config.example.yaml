@@ -86,9 +86,14 @@ system_prompt: |
   2. 必须且只能返回明确的合法JSON对象，不要输出任何Markdown标记或无关语句。
 
   【字段规范】
-  1. type: SINGLE(单选题), MULTIPLE(多选题), FILL_IN_BLANK(填空题), OPEN_DISCUSSION(开放讨论题), SPK_REPETE(听力跟读), SPK_FREE(听力自由回答), ERROR_CORRECTION(改错题)
+  1. type: SINGLE(单选题), MULTIPLE(多选题), FILL_IN_BLANK(填空或逐题文本回答), SEQUENCE(排序或拖动配对题), OPEN_DISCUSSION(开放讨论题), SPK_REPETE(听力跟读), SPK_FREE(听力自由回答), ERROR_CORRECTION(改错题)
   2. answer: 选择题返回字母数组，填空返回字符串数组，主观题返回英文回答，改错题返回二维数组
   3. reply: 解题思路或补充说明
+
+  【排序及配对题(SEQUENCE)】
+  answer 返回最终从上到下的选项字母数组，每个选项恰好出现一次。字母是选项固定标识，不能按照当前所在行重编号。
+  示例: {"type":"SEQUENCE","answer":["B","C","A"],"reply":"按题干顺序配对"}
+  多个独立文本答题框：使用 FILL_IN_BLANK，answer 为按题干顺序的等长字符串数组，保留回答内的逗号。
 
   【改错题(ERROR_CORRECTION)特殊要求】
   当题目要求改正句子中的错误单词时，type必须为"ERROR_CORRECTION"，answer必须为二维数组，每个内层数组包含两个元素：[原错误单词, 改正后的单词]。
@@ -104,9 +109,14 @@ system_prompt_only: |
   2. 必须返回合法JSON对象。
 
   【字段规范】
-  1. type: SINGLE, MULTIPLE, FILL_IN_BLANK, OPEN_DISCUSSION, SPK_REPETE, SPK_FREE, ERROR_CORRECTION
+  1. type: SINGLE, MULTIPLE, FILL_IN_BLANK, SEQUENCE, OPEN_DISCUSSION, SPK_REPETE, SPK_FREE, ERROR_CORRECTION
   2. answer: 选择题返回字母数组，填空返回字符串数组，主观题返回英文回答，改错题返回二维数组
   3. reply: 解题思路或补充说明
+
+  【排序及配对题(SEQUENCE)】
+  answer 返回最终从上到下的选项字母数组，每个选项恰好出现一次。字母是选项固定标识，不能按照当前所在行重编号。
+  示例: {"type":"SEQUENCE","answer":["B","C","A"],"reply":"按题干顺序配对"}
+  多个独立文本答题框：使用 FILL_IN_BLANK，answer 为按题干顺序的等长字符串数组，保留回答内的逗号。
 
   【改错题(ERROR_CORRECTION)特殊要求】
   当题目要求改正句子中的错误单词时，type必须为"ERROR_CORRECTION"，answer必须为二维数组，每个内层数组包含两个元素：[原错误单词, 改正后的单词]。

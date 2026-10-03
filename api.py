@@ -11,6 +11,7 @@ import shutil
 import os
 import uvicorn
 import requests
+from media_download import download_media
 import random
 from pydantic import BaseModel
 import uuid
@@ -198,14 +199,11 @@ async def transcribe_audio(file_url: Item):
     tmp_file = None
     try:
         logger.debug(f"[{request_id}] 下载音频: {file_url.file_url}")
-        file_response = requests.get(file_url.file_url, proxies=get_requests_proxies())
-        file_response.raise_for_status()
-        data = file_response.content
-        logger.info(f"[{request_id}] 音频下载完成 | 大小: {len(data)} bytes")
-
         tmp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-        tmp_file.write(data)
         tmp_file.close()
+        size = download_media(file_url.file_url, tmp_file.name,
+                              proxies=get_requests_proxies(), logger=logger)
+        logger.info(f"[{request_id}] 音频下载完成 | 大小: {size} bytes")
     except Exception as e:
         logger.error(f"[{request_id}] 音频下载失败: {e}")
         if tmp_file and os.path.exists(tmp_file.name):
@@ -247,14 +245,11 @@ async def transcribe_from_video(file_url: Item):
     tmp_audio = None
     try:
         logger.debug(f"[{request_id}] 下载视频: {file_url.file_url}")
-        file_response = requests.get(file_url.file_url, proxies=get_requests_proxies())
-        file_response.raise_for_status()
-        data = file_response.content
-        logger.info(f"[{request_id}] 视频下载完成 | 大小: {len(data)} bytes")
-
         tmp_video = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
-        tmp_video.write(data)
         tmp_video.close()
+        size = download_media(file_url.file_url, tmp_video.name,
+                              proxies=get_requests_proxies(), logger=logger)
+        logger.info(f"[{request_id}] 视频下载完成 | 大小: {size} bytes")
 
         tmp_audio = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
         tmp_audio.close()

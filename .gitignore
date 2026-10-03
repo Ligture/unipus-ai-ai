@@ -4,6 +4,8 @@
 
 # Python
 .venv/
+.asr-runtime/
+benchmark-results/
 __pycache__/
 *.pyc
 *.pyo

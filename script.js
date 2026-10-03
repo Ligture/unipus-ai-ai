@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Unipus-ai-ai(u校园ai版ai版)
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.7
 // @description  本脚本能对音频/视频转录为文本,并调用LLM模型生成答案并自动填充，口语题目可自动生成音频替换完成。
 // @author       lpmon
 // @match        *://ucontent.unipus.cn/*
 // @include      *://ucontent.unipus.cn/*
 // @grant        GM.xmlHttpRequest
+// @grant        GM_setClipboard
 // @grant        GM_addStyle
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -170,6 +171,8 @@
 
     // --- 脚本全局变量 ---
     let currentTranscript = "";
+    let transcriptCopyText = "";
+    let answerCopyText = "";
     const TTS_RATE_KEY = 'unipus_tts_rate';
     let ttsLengthScale = GM_getValue(TTS_RATE_KEY, 1.0);
     // 兼容旧版pyttsx3的rate值(80-250), 重置为Piper的length_scale(0.5-2.0)
@@ -286,6 +289,8 @@
     const transcribeContent = document.createElement('div');
     transcribeContent.id = 'ua-transcribe-content';
     transcribeContent.className = 'ua-panel-content';
+    const copyTranscriptButton = createCopyButton('复制转录', () => transcriptCopyText);
+    transcribePanel.appendChild(copyTranscriptButton);
     transcribePanel.appendChild(transcribeContent);
 
     const llmPanel = document.createElement('div');
@@ -294,6 +299,8 @@
     const llmContent = document.createElement('div');
     llmContent.id = 'ua-llm-content';
     llmContent.className = 'ua-panel-content';
+    const copyAnswerButton = createCopyButton('复制答案', () => answerCopyText);
+    llmPanel.appendChild(copyAnswerButton);
     llmPanel.appendChild(llmContent);
 
     panelsWrapper.appendChild(transcribePanel);
@@ -301,6 +308,40 @@
 
     contentArea.appendChild(tabBar);
     contentArea.appendChild(panelsWrapper);
+
+    // 从脚本保存的原始字符串复制，不读取页面选区或触发网站 copy 事件。
+    function createCopyButton(label, getText) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ua-btn ua-btn-primary ua-copy-btn';
+        button.textContent = label;
+        button.disabled = true;
+        button.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const text = getText();
+            if (!text.trim()) {
+                showToast('暂无可复制的结果', 'error');
+                return;
+            }
+            button.disabled = true;
+            try {
+                await new Promise((resolve, reject) => {
+                    if (typeof GM_setClipboard !== 'function') {
+                        reject(new Error('请更新油猴脚本并启用剪贴板权限'));
+                        return;
+                    }
+                    GM_setClipboard(text, 'text', resolve);
+                });
+                showToast(label + '成功', 'success');
+            } catch (error) {
+                showToast('复制失败：' + error.message, 'error');
+            } finally {
+                button.disabled = !getText().trim();
+            }
+        });
+        return button;
+    }
 
     // Tab 切换逻辑
     tabTranscribe.addEventListener('click', () => switchTab('transcribe'));
@@ -748,12 +789,22 @@
         }
 
         .ua-panel {
+            display: flex;
+            flex-direction: column;
             position: absolute;
             inset: 0;
             opacity: 0;
             visibility: hidden;
             transform: translateX(10px);
             transition: var(--ua-transition);
+        }
+
+        .ua-copy-btn {
+            align-self: flex-end;
+            flex: 0 0 auto;
+            margin: 10px 16px 0;
+            padding: 6px 12px;
+            font-size: 12px;
         }
 
         .ua-panel-active {
@@ -763,7 +814,8 @@
         }
 
         .ua-panel-content {
-            height: 100%;
+            flex: 1;
+            min-height: 0;
             padding: 16px;
             overflow-y: auto;
             font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
@@ -1066,7 +1118,9 @@
     makeAppWindowDraggableAndResizable();
 
     // --- 辅助函数 ---
-    function updateStatus(message, type = 'loading') {
+    function updateStatus(message, type = 'loading', copyText = '') {
+        transcriptCopyText = type === 'success' ? String(copyText) : '';
+        copyTranscriptButton.disabled = !transcriptCopyText.trim();
         const statusText = document.querySelector('.ua-status-text');
         const statusDot = document.querySelector('.ua-status-dot');
         statusText.textContent = type === 'loading' ? '处理中...' : (type === 'success' ? '就绪' : '错误');
@@ -1077,6 +1131,8 @@
     }
 
     function updateAnswerStatus(message, type = 'loading') {
+        answerCopyText = type === 'success' ? String(message ?? '') : '';
+        copyAnswerButton.disabled = !answerCopyText.trim();
         llmContent.className = `ua-panel-content ua-status-${type}`;
         llmContent.textContent = message;
         llmContent.scrollTop = llmContent.scrollHeight;
@@ -1617,7 +1673,7 @@
             }
 
             if (formattedTranscript) {
-                updateStatus(formattedTranscript, 'success');
+                updateStatus(formattedTranscript, 'success', formattedTranscript);
                 llmButton.style.display = 'inline-flex';
                 showToast('转录完成', 'success');
             } else {

@@ -12,6 +12,7 @@ import os
 import uvicorn
 import requests
 from media_download import download_media
+from transcript_cache import TranscriptCache, TranscriptionService, config_version
 import random
 from pydantic import BaseModel
 import uuid
@@ -106,6 +107,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Transcript-Cache"],
 )
 
 # === Endpoint 配置 ===
@@ -123,7 +125,10 @@ async def get_endpoints():
     """返回所有 endpoint 路径配置，支持 config.yaml 中的 endpoints 字段覆盖"""
     custom = config.get('endpoints', {})
     merged = {**_DEFAULT_ENDPOINTS, **custom}
-    return merged
+    return {**merged, "transcription_cache": {
+        "version": transcription_service.version,
+        "enabled": transcription_service.cache.enabled,
+    }}
 
 
 # 加载代理配置
@@ -191,6 +196,16 @@ except Exception as e:
 
 class Item(BaseModel):
     file_url: str
+    force_refresh: bool = False
+
+
+cache_config = config.get('transcription_cache', {})
+transcription_service = TranscriptionService(
+    TranscriptCache(cache_config.get('path', './cache/transcripts.sqlite3'),
+                    enabled=cache_config.get('enabled', True),
+                    ttl_days=cache_config.get('ttl_days', 7),
+                    max_entries=cache_config.get('max_entries', 500), logger=logger),
+    config_version(whisper_model_path, cache_config.get('version', '1')))
 
 class LLMItem(BaseModel):
     transcript: str
@@ -199,6 +214,12 @@ class LLMItem(BaseModel):
 
 @app.post("/api/transcribe/audio")
 async def transcribe_audio(file_url: Item):
+    return await transcription_service.run(
+        file_url.file_url, 'audio', lambda: _transcribe_audio(file_url),
+        force_refresh=file_url.force_refresh)
+
+
+def _transcribe_audio(file_url: Item):
     request_id = str(uuid.uuid4())[:8]
     logger.info(f"[{request_id}] 音频转录请求 | URL: {file_url.file_url[:100]}")
 
@@ -244,6 +265,12 @@ async def transcribe_audio(file_url: Item):
 
 @app.post("/api/transcribe/video")
 async def transcribe_from_video(file_url: Item):
+    return await transcription_service.run(
+        file_url.file_url, 'video', lambda: _transcribe_from_video(file_url),
+        force_refresh=file_url.force_refresh)
+
+
+def _transcribe_from_video(file_url: Item):
     request_id = str(uuid.uuid4())[:8]
     logger.info(f"[{request_id}] 视频转录请求 | URL: {file_url.file_url[:100]}")
 

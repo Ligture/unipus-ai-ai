@@ -80,9 +80,13 @@
     let ENDPOINT_TTS = _endpoints.tts;
     let ENDPOINT_AUDIO_FILES = _endpoints.audio_files;
 
+    let transcriptionCacheVersion = null;
+    let endpointConfigReady = Promise.resolve();
     // 启动时向后端请求最新 endpoint 配置
     function fetchEndpointConfig() {
-        return new Promise((resolve) => {
+        transcriptionCacheVersion = null;
+        const base = API_BASE_URL;
+        endpointConfigReady = new Promise((resolve) => {
             GM.xmlHttpRequest({
                 method: 'GET',
                 url: API_BASE_URL + '/api/config/endpoints',
@@ -91,6 +95,10 @@
                     if (resp.status >= 200 && resp.status < 300) {
                         try {
                             const remote = JSON.parse(resp.responseText);
+                            if (base !== API_BASE_URL) { resolve(); return; }
+                            transcriptionCacheVersion = remote.transcription_cache?.enabled &&
+                                typeof remote.transcription_cache.version === 'string'
+                                ? remote.transcription_cache.version : null;
                             _endpoints = { ...ENDPOINT_DEFAULTS, ...remote };
                             GM_setValue(ENDPOINT_CACHE_KEY, _endpoints);
                             ENDPOINT_TRANSCRIBE = _endpoints.transcribe;
@@ -116,6 +124,7 @@
                 }
             });
         });
+        return endpointConfigReady;
     }
 
     // 等待DOM就绪后再构建UI
@@ -173,6 +182,10 @@
     let currentTranscript = "";
     let transcriptCopyText = "";
     let answerCopyText = "";
+    const TRANSCRIPT_CACHE_KEY = 'unipus_transcript_cache_v2';
+    const TRANSCRIPT_CACHE_TTL = 7 * 86400 * 1000;
+    const TRANSCRIPT_CACHE_LIMIT = 100;
+    const pendingTranscripts = new Map();
     const TTS_RATE_KEY = 'unipus_tts_rate';
     let ttsLengthScale = GM_getValue(TTS_RATE_KEY, 1.0);
     // 兼容旧版pyttsx3的rate值(80-250), 重置为Piper的length_scale(0.5-2.0)
@@ -291,6 +304,12 @@
     transcribeContent.className = 'ua-panel-content';
     const copyTranscriptButton = createCopyButton('复制转录', () => transcriptCopyText);
     transcribePanel.appendChild(copyTranscriptButton);
+    const refreshTranscriptButton = document.createElement('button');
+    refreshTranscriptButton.type = 'button';
+    refreshTranscriptButton.className = 'ua-btn ua-btn-primary ua-copy-btn';
+    refreshTranscriptButton.textContent = '重新转录';
+    refreshTranscriptButton.addEventListener('click', () => runTranscription(true));
+    transcribePanel.appendChild(refreshTranscriptButton);
     transcribePanel.appendChild(transcribeContent);
 
     const llmPanel = document.createElement('div');
@@ -1240,11 +1259,79 @@
     }
 
     // --- API 调用函数 ---
-    function sendToApi(audioUrl, is_audio) {
+    // --- 转录缓存：只保存合法且非空的完整响应 ---
+    function transcriptText(raw) {
+        const body = JSON.parse(raw);
+        if (!Array.isArray(body.transcription) ||
+            !body.transcription.every(s => s && typeof s.text === 'string')) {
+            throw new Error('转录响应格式无效');
+        }
+        return body.transcription.map(s => s.text.trim()).join(' ').trim();
+    }
+
+    function readTranscriptCache() {
+        try {
+            const records = GM_getValue(TRANSCRIPT_CACHE_KEY, []);
+            if (!Array.isArray(records)) return [];
+            return records.filter(r => {
+                try {
+                    return typeof r.key === 'string' && Number.isFinite(r.created) &&
+                        Number.isFinite(r.used) && Date.now() - r.created < TRANSCRIPT_CACHE_TTL &&
+                        !!transcriptText(r.text);
+                } catch (_) { return false; }
+            });
+        } catch (error) {
+            console.warn('[Unipus AI] 转录缓存读取失败', error);
+            return [];
+        }
+    }
+
+    function writeTranscriptCache(records) {
+        try {
+            records.sort((a, b) => b.used - a.used);
+            GM_setValue(TRANSCRIPT_CACHE_KEY, records.slice(0, TRANSCRIPT_CACHE_LIMIT));
+        } catch (error) { console.warn('[Unipus AI] 转录缓存写入失败', error); }
+    }
+
+    async function getTranscript(url, isAudio, forceRefresh = false) {
+        await endpointConfigReady;
+        const endpoint = isAudio ? API_URL : VIDEO_API_URL;
+        const version = transcriptionCacheVersion;
+        const key = JSON.stringify([endpoint, isAudio ? 'audio' : 'video', url, version]);
+        const pending = pendingTranscripts.get(key);
+        if (pending) {
+            const result = await pending.promise;
+            if (!forceRefresh || pending.refresh) return result;
+            return getTranscript(url, isAudio, true);
+        }
+        const promise = (async () => {
+            const records = readTranscriptCache();
+            const found = version && !forceRefresh && records.find(r => r.key === key);
+            if (found) {
+                found.used = Date.now();
+                writeTranscriptCache(records);
+                return { text: found.text, cache: '前端' };
+            }
+            const result = await sendToApi(url, isAudio, forceRefresh, endpoint);
+            const text = transcriptText(result.text);
+            if (version && text) {
+                const latest = readTranscriptCache().filter(r => r.key !== key);
+                latest.push({ key, text: result.text, created: Date.now(), used: Date.now() });
+                writeTranscriptCache(latest);
+            }
+            return result;
+        })();
+        pendingTranscripts.set(key, { promise, refresh: forceRefresh });
+        try { return await promise; }
+        finally { pendingTranscripts.delete(key); }
+    }
+
+    function sendToApi(audioUrl, is_audio, forceRefresh = false, apiEndpoint = null) {
         return new Promise((resolve, reject) => {
-            let a_url = is_audio ? API_URL : VIDEO_API_URL;
+            let a_url = apiEndpoint || (is_audio ? API_URL : VIDEO_API_URL);
             const payload = {};
             payload[API_JSON_PAYLOAD_KEY] = audioUrl;
+            payload.force_refresh = forceRefresh;
 
             GM.xmlHttpRequest({
                 method: 'POST',
@@ -1253,7 +1340,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 onload: (response) => {
                     if (response.status >= 200 && response.status < 300) {
-                        resolve(response.responseText);
+                        resolve({ text: response.responseText, cache:
+                            /^X-Transcript-Cache:\s*hit\s*$/im.test(response.responseHeaders || '') ? '后端' : null });
                     } else {
                         let errorMsg = `API 错误: ${response.status}`;
                         try {
@@ -1610,7 +1698,9 @@
     }
 
     // --- 主执行函数 ---
-    async function runTranscription() {
+    async function runTranscription(forceRefresh = false) {
+        forceRefresh = forceRefresh === true;
+        refreshTranscriptButton.disabled = true;
         triggerButton.disabled = true;
         triggerButton.querySelector('.ua-btn-text').textContent = '转录中...';
         triggerButton.classList.add('ua-loading');
@@ -1646,7 +1736,9 @@
             updateStatus(`2. 找到链接: ${absoluteAudioUrl.substring(0, 80)}...`);
 
             updateStatus('3. 正在发送到 API...');
-            const apiResponseText = await sendToApi(absoluteAudioUrl, is_audio);
+            const result = await getTranscript(absoluteAudioUrl, is_audio, forceRefresh);
+            const apiResponseText = result.text;
+            if (result.cache) showToast(`使用${result.cache}缓存`, 'success');
             updateStatus('4. 正在解析结果...');
 
             let responseJson;
@@ -1693,8 +1785,9 @@
             updateStatus(`错误: ${error.message}`, 'error');
             showToast('转录失败', 'error');
         } finally {
+            refreshTranscriptButton.disabled = false;
             triggerButton.disabled = false;
-            triggerButton.querySelector('.ua-btn-text').textContent = '重新转录';
+            triggerButton.querySelector('.ua-btn-text').textContent = '转录';
             triggerButton.classList.remove('ua-loading');
         }
     }

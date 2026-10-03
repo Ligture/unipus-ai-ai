@@ -125,11 +125,11 @@ class DownloadTests(unittest.TestCase):
     def run_api_endpoint(self, endpoint, path):
         # Compile the actual endpoint functions, without app startup/model loads.
         # The HTTP download and temporary-file lifecycle remain real.
-        from fastapi.responses import JSONResponse
+        from starlette.responses import JSONResponse
         from media_download import download_media
         source = ast.parse((Path(__file__).resolve().parents[1] / "api.py").read_text(encoding="utf-8"))
-        function = next(node for node in source.body if isinstance(node, ast.AsyncFunctionDef)
-                        and node.name == endpoint)
+        function = next(node for node in source.body if isinstance(node, ast.FunctionDef)
+                        and node.name == '_' + endpoint)
         function.decorator_list = []
         self.transcribed = []
 
@@ -154,7 +154,7 @@ class DownloadTests(unittest.TestCase):
             return factory(dir=self.directory.name, **kwargs)
 
         with patch.object(tempfile, "NamedTemporaryFile", side_effect=temporary):
-            return asyncio.run(context[endpoint](SimpleNamespace(file_url=self.url(path))))
+            return context['_' + endpoint](SimpleNamespace(file_url=self.url(path)))
 
     def test_audio_endpoint_recovers_and_cleans_up(self):
         response = self.run_api_endpoint("transcribe_audio", "/broken")

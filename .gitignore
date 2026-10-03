@@ -33,4 +33,5 @@ config.json
 .claude/
 
 # 运行时
+cache/
 .unipus.pid

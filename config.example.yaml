@@ -29,6 +29,14 @@ model: "deepseek-v4-flash"
 # Whisper 语音识别模型路径
 whisper_model: "./base"
 
+# 转录结果持久缓存；同路径替换 Whisper 模型时递增 version
+transcription_cache:
+  enabled: true
+  path: "./cache/transcripts.sqlite3"
+  ttl_days: 7
+  max_entries: 500
+  version: "1"
+
 # 服务器监听配置
 server:
   host: "0.0.0.0"    # 监听地址 (0.0.0.0 = 所有网卡)

@@ -42,7 +42,13 @@ server:
 # false: 直连 (默认)
 # true: 使用下方配置的代理
 proxy:
+  # 兼容旧配置：下方独立开关未填写时，使用 enabled 的值
   enabled: false
+  # LLM API 请求是否走代理
+  llm_enabled: false
+  # Unipus 视频、音频下载是否走代理
+  media_enabled: false
+  # 两类请求共用下方代理地址
   # HTTP代理地址，如 http://127.0.0.1:7890
   http: ""
   # HTTPS代理地址，支持 http/socks5

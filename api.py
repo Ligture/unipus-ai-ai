@@ -130,12 +130,18 @@ async def get_endpoints():
 proxy_config = config.get('proxy', {'enabled': False})
 logger.info(f"代理配置: enabled={proxy_config.get('enabled')}")
 
+def is_proxy_enabled(scope):
+    """独立开关优先，未配置时兼容旧的 enabled 字段。"""
+    return bool(proxy_config.get(f'{scope}_enabled', proxy_config.get('enabled', False)))
+
+logger.info(f"代理开关: LLM={is_proxy_enabled('llm')}, 媒体下载={is_proxy_enabled('media')}")
+
 # 清除系统代理环境变量，防止自动读取系统代理
 for key in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy']:
     os.environ.pop(key, None)
 
 # 如果未启用代理，设置空的环境变量强制禁用
-if not proxy_config.get('enabled'):
+if not (is_proxy_enabled('llm') or is_proxy_enabled('media')):
     os.environ['NO_PROXY'] = '*'
     os.environ['no_proxy'] = '*'
     logger.info("代理已禁用，使用直连模式")
@@ -144,20 +150,20 @@ else:
 
 # 创建httpx客户端（支持代理配置）
 def create_http_client():
-    if proxy_config.get('enabled'):
+    if is_proxy_enabled('llm'):
         http_proxy = proxy_config.get('http', '')
         https_proxy = proxy_config.get('https', '')
         proxy_url = https_proxy or http_proxy
         if proxy_url:
             logger.info(f"创建httpx客户端，代理: {proxy_url}")
-            return httpx.Client(proxy=proxy_url)
-    return httpx.Client(proxy=None)
+            return httpx.Client(proxy=proxy_url, trust_env=False)
+    return httpx.Client(proxy=None, trust_env=False)
 
 http_client = create_http_client()
 
 # 创建requests代理配置
 def get_requests_proxies():
-    if proxy_config.get('enabled'):
+    if is_proxy_enabled('media'):
         http_proxy = proxy_config.get('http', '')
         https_proxy = proxy_config.get('https', '')
         if http_proxy or https_proxy:

@@ -1399,8 +1399,18 @@
     }
 
     // --- TTS 相关函数 ---
+    function prepareTTSText(text) {
+        // 只清理行首题号；分隔符后是数字时保留小数和日期。
+        return text.replace(/^[ \t]*(?:[0-9０-９]+[.．、)）]|[(（][0-9０-９]+[)）])(?:[ \t]+|(?=[A-Za-z\u4e00-\u9fff])|$)/gm, '').trim();
+    }
+
     function sendToTTSApi(text, lengthScale) {
         return new Promise((resolve, reject) => {
+            text = prepareTTSText(text);
+            if (!text) {
+                reject(new Error('去除题号后文本为空'));
+                return;
+            }
             GM.xmlHttpRequest({
                 method: 'POST',
                 url: TTS_API_URL,
